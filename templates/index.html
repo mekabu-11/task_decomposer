@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIタスク司令塔</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { --bg: #0F172A; --card: #1E293B; --accent: #6366F1; }
+    body { background: var(--bg); color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+    .card { background: var(--card); }
+    .dark-input {
+      background: #0F172A;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      transition: border-color 0.15s;
+    }
+    .dark-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+    .dark-input::placeholder { color: #475569; }
+    pre { font-family: 'Courier New', Courier, monospace; }
+    .skeleton { background: linear-gradient(90deg, #1E293B 25%, #2d3f55 50%, #1E293B 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    .task-card { transition: box-shadow 0.15s; }
+    .task-card:hover { box-shadow: 0 0 0 1px rgba(99,102,241,0.3); }
+    .btn-primary { background: var(--accent); color: white; transition: background 0.15s; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-primary:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+    .toast-item { animation: slideIn 0.2s ease; }
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .collapse-section { overflow: hidden; }
+    .board-col-header { border-bottom: 2px solid; padding-bottom: 8px; margin-bottom: 12px; }
+    textarea { resize: vertical; }
+    input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+<!-- Toast container -->
+<div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+<!-- API Key Modal -->
+<div id="modal-overlay" class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40 hidden">
+  <div class="card rounded-2xl p-6 w-full max-w-md mx-4 border border-slate-700">
+    <h2 class="text-base font-bold mb-1">🔑 APIキーを設定</h2>
+    <p class="text-xs text-slate-400 mb-3 leading-relaxed">
+      使用するAIプロバイダーとAPIキーを入力してください。<br>
+      キーはサーバーメモリのみに保持され、永続化・ログ出力は行いません。
+    </p>
+    <!-- Provider selector -->
+    <div class="flex gap-4 mb-3">
+      <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+        <input type="radio" name="modal-provider" value="anthropic" checked
+               onchange="onProviderChange('anthropic')" class="accent-indigo-500">
+        Claude (Anthropic)
+      </label>
+      <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+        <input type="radio" name="modal-provider" value="gemini"
+               onchange="onProviderChange('gemini')" class="accent-indigo-500">
+        Gemini (Google)
+      </label>
+    </div>
+    <input
+      type="password"
+      id="api-key-input"
+      placeholder="sk-ant-api03-..."
+      class="dark-input w-full px-3 py-2 rounded-lg text-sm mb-4 font-mono"
+    >
+    <div class="flex gap-2 justify-end">
+      <button id="api-key-cancel" class="text-sm px-4 py-2 rounded-lg text-slate-400 hover:text-white transition-colors">
+        キャンセル
+      </button>
+      <button id="api-key-submit" class="btn-primary text-sm px-5 py-2 rounded-lg font-semibold">
+        設定する
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Header -->
+<header class="border-b border-slate-800 px-4 py-3 flex items-center gap-3 flex-wrap">
+  <div class="flex items-center gap-2 mr-auto">
+    <span class="text-lg font-bold tracking-tight">⚡ AIタスク司令塔</span>
+    <span class="text-xs text-slate-600 hidden sm:block">Slackの依頼をAIがタスク分解</span>
+  </div>
+
+  <!-- PROJECT.md context -->
+  <div class="flex items-center gap-1">
+    <label class="cursor-pointer">
+      <span id="context-badge" class="text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-500 hover:border-slate-500 transition-colors cursor-pointer select-none">
+        📄 コンテキスト未設定
+      </span>
+      <input type="file" id="context-file-input" accept=".md,.txt" class="hidden">
+    </label>
+    <button id="context-remove-btn" class="hidden text-xs text-slate-600 hover:text-red-400 transition-colors px-1" title="削除">✕</button>
+  </div>
+
+  <!-- API key status -->
+  <div class="flex items-center gap-2">
+    <span id="api-key-dot" class="w-2 h-2 rounded-full bg-red-500 flex-none"></span>
+    <button id="api-key-btn" class="text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-400 hover:border-indigo-500 hover:text-indigo-400 transition-colors">
+      APIキー設定
+    </button>
+  </div>
+
+  <!-- Clear -->
+  <button id="clear-btn" class="text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-500 hover:border-red-500 hover:text-red-400 transition-colors">
+    🗑 全クリア
+  </button>
+</header>
+
+<!-- Warning banners area -->
+<div id="warnings-area"></div>
+
+<!-- Main -->
+<main class="px-4 py-4 max-w-screen-xl mx-auto">
+
+  <!-- Input Panel -->
+  <div class="card rounded-2xl p-4 mb-5 border border-slate-700/50">
+    <div class="flex gap-3 items-start">
+      <div class="flex-1">
+        <textarea
+          id="message-input"
+          rows="4"
+          placeholder="Slackのメッセージをコピペ…&#10;例：「認証周りのバグ直してほしい。本番で出てるやつ」&#10;例：「来週までにダッシュボードのAPIをv2に移行したい」&#10;例：「サーバーのメモリ使用率が高騰してるので調査して」"
+          class="dark-input w-full px-3 py-2 rounded-lg text-sm leading-relaxed"
+        ></textarea>
+        <div class="flex justify-between items-center mt-1.5">
+          <span id="char-count" class="text-xs text-slate-600">0 / 500文字</span>
+          <span class="text-xs text-slate-700">Cmd+Enter で送信</span>
+        </div>
+      </div>
+      <button id="analyze-btn" class="btn-primary flex-none px-5 py-2 rounded-xl font-semibold text-sm whitespace-nowrap">
+        AI分解する
+      </button>
+    </div>
+  </div>
+
+  <!-- Skeleton loader -->
+  <div id="skeleton-loader" class="hidden mb-5">
+    <p class="text-xs text-slate-500 text-center mb-3 animate-pulse">AIが分析中...</p>
+    <div class="skeleton rounded-2xl h-44 w-full max-w-xs"></div>
+  </div>
+
+  <!-- Empty state -->
+  <div id="empty-state" class="text-center py-24 text-slate-700">
+    <div class="text-5xl mb-3">📋</div>
+    <p class="text-sm">依頼メッセージを入力して「AI分解する」を押してみましょう</p>
+  </div>
+
+  <!-- Task Board -->
+  <div id="task-board" class="hidden grid grid-cols-1 lg:grid-cols-3 gap-5">
+    <!-- TODAY -->
+    <div>
+      <div class="board-col-header border-red-500/50 flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-red-500 flex-none"></span>
+        <span class="font-semibold text-sm">今日やること</span>
+        <span id="today-count" class="text-xs text-slate-600 font-mono"></span>
+        <span id="today-hours" class="text-xs font-mono ml-auto"></span>
+      </div>
+      <div id="today-cards"></div>
+    </div>
+
+    <!-- THIS WEEK -->
+    <div>
+      <div class="board-col-header border-yellow-500/50 flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-yellow-500 flex-none"></span>
+        <span class="font-semibold text-sm">今週やること</span>
+        <span id="this-week-count" class="text-xs text-slate-600 font-mono"></span>
+      </div>
+      <div id="this-week-cards"></div>
+    </div>
+
+    <!-- NEXT WEEK -->
+    <div>
+      <div class="board-col-header border-blue-500/50 flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-blue-500 flex-none"></span>
+        <span class="font-semibold text-sm">来週以降</span>
+        <span id="next-week-count" class="text-xs text-slate-600 font-mono"></span>
+      </div>
+      <div id="next-week-cards"></div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const state = {
+  tasks: [],
+  hasApiKey: false,
+  provider: 'anthropic',
+  hasContext: false,
+  contextFilename: null,
+  loading: false,
+};
+
+// Buffer UI state per task (persists across re-renders)
+const bufferUI = {};
+
+// ============================================================
+// API helper
+// ============================================================
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ============================================================
+// Init
+// ============================================================
+async function init() {
+  try {
+    const [tasks, keyStatus, ctxStatus] = await Promise.all([
+      api('GET', '/api/tasks'),
+      api('GET', '/api/has-key'),
+      api('GET', '/api/context'),
+    ]);
+    state.tasks = tasks;
+    state.hasApiKey = keyStatus.hasKey;
+    state.provider = keyStatus.provider || 'anthropic';
+    state.hasContext = ctxStatus.hasContext;
+    state.contextFilename = ctxStatus.filename;
+
+    updateApiKeyUI();
+    updateContextBadge();
+    renderBoard();
+
+    if (!state.hasApiKey) openModal();
+  } catch (e) {
+    toast('初期化エラー: ' + e.message, 'error');
+  }
+}
+
+// ============================================================
+// Render
+// ============================================================
+function renderBoard() {
+  const sorted = (arr) => [...arr].sort((a, b) => b.priority.score - a.priority.score);
+  const today    = sorted(state.tasks.filter(t => t.schedule === 'today'));
+  const thisWeek = sorted(state.tasks.filter(t => t.schedule === 'this_week'));
+  const nextWeek = sorted(state.tasks.filter(t => t.schedule === 'next_week'));
+
+  document.getElementById('today-cards').innerHTML    = today.map(renderCard).join('');
+  document.getElementById('this-week-cards').innerHTML = thisWeek.map(renderCard).join('');
+  document.getElementById('next-week-cards').innerHTML  = nextWeek.map(renderCard).join('');
+
+  // Column counts
+  const setCount = (id, arr) => {
+    document.getElementById(id).textContent = arr.length ? `(${arr.length})` : '';
+  };
+  setCount('today-count', today);
+  setCount('this-week-count', thisWeek);
+  setCount('next-week-count', nextWeek);
+
+  // Today hours display
+  const todayHours = today
+    .filter(t => t.status !== 'done')
+    .reduce((s, t) => s + (t.adjustedTotalHours ?? t.totalHours), 0);
+
+  const hoursEl = document.getElementById('today-hours');
+  if (today.length) {
+    hoursEl.textContent = `合計 ${todayHours}h`;
+    hoursEl.className = `text-xs font-mono ml-auto ${todayHours > 6 ? 'text-red-400' : 'text-slate-500'}`;
+  } else {
+    hoursEl.textContent = '';
+  }
+
+  // Warnings
+  renderWarnings(todayHours);
+
+  // Empty / board visibility
+  const hasTasks = state.tasks.length > 0;
+  document.getElementById('empty-state').classList.toggle('hidden', hasTasks || state.loading);
+  document.getElementById('task-board').classList.toggle('hidden', !hasTasks);
+
+  // Restore open buffer panels
+  Object.keys(bufferUI).forEach(taskId => {
+    if (bufferUI[taskId]?.open) {
+      const panel = document.getElementById(`bp-${taskId}`);
+      if (panel) panel.classList.remove('hidden');
+    }
+  });
+}
+
+// ============================================================
+// Card renderer
+// ============================================================
+function renderCard(task) {
+  const pc = {
+    high:   { label: '高優先', cls: 'text-red-400 bg-red-500/20 border-red-500/30' },
+    medium: { label: '中優先', cls: 'text-yellow-400 bg-yellow-500/20 border-yellow-500/30' },
+    low:    { label: '低優先', cls: 'text-blue-400 bg-blue-500/20 border-blue-500/30' },
+  }[task.priority.level] || { label: '?', cls: 'text-slate-400 bg-slate-700 border-slate-600' };
+
+  const sc = {
+    pending:     { label: '未着手', dot: 'bg-slate-500', next: 'in_progress', nextLabel: '着手する →' },
+    in_progress: { label: '進行中', dot: 'bg-indigo-400', next: 'done',        nextLabel: '完了する ✓' },
+    done:        { label: '完了',   dot: 'bg-green-400',  next: 'pending',     nextLabel: '戻す ↩' },
+  }[task.status] || { label: '?', dot: 'bg-slate-500', next: 'pending', nextLabel: '戻す' };
+
+  const layerIcon = { infra: '🖥', app: '📱', both: '⚡' };
+
+  const hours = task.adjustedTotalHours ?? task.totalHours;
+  const days  = task.adjustedDays ?? task.estimatedDays;
+
+  const replyText = task.adjustedReplyTemplate || task.replyTemplate || '';
+  const hasBuffer = task.buffer && (task.buffer.hours != null || task.buffer.multiplier != null);
+
+  const subtasksHtml = (task.subtasks || []).map(sub => `
+    <li class="flex items-center gap-2 py-0.5 text-xs text-slate-300">
+      <span class="text-sm flex-none">${layerIcon[sub.layer] || '•'}</span>
+      <span class="flex-1">${esc(sub.title)}</span>
+      <span class="font-mono text-slate-500 flex-none">${sub.hours}h</span>
+    </li>
+  `).join('');
+
+  const bs = bufferUI[task.id] || {};
+  const bufferType = bs.type || 'hours';
+
+  return `
+<div class="task-card card rounded-2xl p-4 mb-3 border border-slate-700/40" data-id="${task.id}">
+
+  <!-- badges row -->
+  <div class="flex flex-wrap items-center gap-1.5 mb-2">
+    <span class="text-xs px-2 py-0.5 rounded-full border ${pc.cls}">${pc.label}</span>
+    ${task.autoMoved ? '<span class="text-xs px-2 py-0.5 rounded-full border border-yellow-500/30 text-yellow-400 bg-yellow-500/10">自動移動</span>' : ''}
+    ${hasBuffer ? '<span class="text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-400 bg-orange-500/10">バッファ済</span>' : ''}
+    <div class="ml-auto flex items-center gap-1.5">
+      <span class="w-1.5 h-1.5 rounded-full ${sc.dot}"></span>
+      <span class="text-xs text-slate-400">${sc.label}</span>
+    </div>
+  </div>
+
+  <!-- title + summary -->
+  <h3 class="font-semibold text-sm mb-1 leading-snug">${esc(task.title)}</h3>
+  <p class="text-xs text-slate-400 leading-relaxed mb-3">${esc(task.summary)}</p>
+
+  <!-- metrics -->
+  <div class="flex gap-3 text-xs font-mono mb-3 flex-wrap">
+    <span class="text-indigo-400 font-semibold">${hours}h</span>
+    <span class="text-slate-700">|</span>
+    <span class="text-slate-300">${days}日</span>
+    <span class="text-slate-700">|</span>
+    <span class="text-slate-500">P:${task.priority.score}</span>
+    <span class="text-slate-700">|</span>
+    <span class="text-slate-500">緊急${task.priority.urgency} 影響${task.priority.impact} 複雑${task.priority.complexity}</span>
+  </div>
+
+  <!-- subtasks -->
+  <div class="mb-2">
+    <button onclick="toggle('st-${task.id}','ar-st-${task.id}')"
+            class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors w-full text-left">
+      <span id="ar-st-${task.id}" class="text-slate-700 w-3">▶</span>
+      <span>サブタスク (${(task.subtasks || []).length}件)</span>
+    </button>
+    <ul id="st-${task.id}" class="hidden mt-2 pl-3 border-l border-slate-700/70 space-y-0.5">
+      ${subtasksHtml}
+    </ul>
+  </div>
+
+  <!-- rationale -->
+  <div class="mb-3">
+    <button onclick="toggle('rt-${task.id}','ar-rt-${task.id}')"
+            class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors w-full text-left">
+      <span id="ar-rt-${task.id}" class="text-slate-700 w-3">▶</span>
+      <span>工数・優先度の根拠</span>
+    </button>
+    <p id="rt-${task.id}" class="hidden mt-2 text-xs text-slate-400 leading-relaxed pl-3 border-l border-slate-700/70">
+      ${esc(task.rationale || '')}
+    </p>
+  </div>
+
+  <!-- reply template -->
+  <div class="mb-3">
+    <div class="flex items-center justify-between mb-1">
+      <span class="text-xs text-slate-500">返答テンプレ${task.adjustedReplyTemplate ? ' <span class="text-orange-400">（バッファ適用済）</span>' : ''}</span>
+      <button onclick="copyEl('rp-${task.id}')" class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">📋 コピー</button>
+    </div>
+    <pre id="rp-${task.id}" class="text-xs rounded-lg p-2.5 whitespace-pre-wrap text-slate-300 leading-relaxed border border-slate-700/50 select-all" style="background:#0F172A">${esc(replyText)}</pre>
+  </div>
+
+  <!-- action buttons -->
+  <div class="flex gap-2 flex-wrap mb-0">
+    <button onclick="updateStatus('${task.id}','${sc.next}')"
+            class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-600/30 transition-colors">
+      ${sc.nextLabel}
+    </button>
+    <button onclick="toggleBuffer('${task.id}')"
+            class="text-xs px-3 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-700 text-slate-300 transition-colors">
+      ⏱ バッファ
+    </button>
+  </div>
+
+  <!-- Buffer Panel -->
+  <div id="bp-${task.id}" class="hidden mt-3 p-3 rounded-xl border border-slate-700/70 bg-slate-900/60">
+    <p class="text-xs font-semibold text-slate-300 mb-3">⏱ バッファを追加</p>
+
+    <!-- type radio -->
+    <div class="flex gap-4 mb-3">
+      <label class="flex items-center gap-1.5 text-xs cursor-pointer">
+        <input type="radio" name="btype-${task.id}" value="hours"
+               ${bufferType === 'hours' ? 'checked' : ''}
+               onchange="switchBufType('${task.id}','hours')"
+               class="accent-indigo-500">
+        時間を加算
+      </label>
+      <label class="flex items-center gap-1.5 text-xs cursor-pointer">
+        <input type="radio" name="btype-${task.id}" value="multiplier"
+               ${bufferType === 'multiplier' ? 'checked' : ''}
+               onchange="switchBufType('${task.id}','multiplier')"
+               class="accent-indigo-500">
+        倍率をかける
+      </label>
+    </div>
+
+    <!-- hours section -->
+    <div id="bh-${task.id}" class="${bufferType === 'hours' ? '' : 'hidden'} mb-2">
+      <div class="flex gap-1 flex-wrap items-center">
+        ${[2,4,6].map(h => `
+          <button onclick="setBufH('${task.id}',${h})"
+                  class="text-xs px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-indigo-600/40 text-slate-300 transition-colors">
+            +${h}h${h===6?' (1日)':''}
+          </button>
+        `).join('')}
+        <input type="number" id="ch-${task.id}" min="0" step="0.5" placeholder="カスタム"
+               oninput="setBufH('${task.id}', parseFloat(this.value)||null, true)"
+               class="dark-input text-xs px-2 py-1 rounded-lg w-20 font-mono">
+        <span class="text-xs text-slate-600">h</span>
+      </div>
+    </div>
+
+    <!-- multiplier section -->
+    <div id="bm-${task.id}" class="${bufferType === 'multiplier' ? '' : 'hidden'} mb-2">
+      <div class="flex gap-1 flex-wrap items-center">
+        ${[1.2,1.5,2.0].map(m => `
+          <button onclick="setBufM('${task.id}',${m})"
+                  class="text-xs px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-indigo-600/40 text-slate-300 transition-colors">
+            ×${m}
+          </button>
+        `).join('')}
+        <input type="number" id="cm-${task.id}" min="1" step="0.1" placeholder="カスタム"
+               oninput="setBufM('${task.id}', parseFloat(this.value)||null, true)"
+               class="dark-input text-xs px-2 py-1 rounded-lg w-20 font-mono">
+        <span class="text-xs text-slate-600">倍</span>
+      </div>
+    </div>
+
+    <!-- selected display -->
+    <div class="text-xs text-slate-500 mb-2">
+      選択中: <span id="bd-${task.id}" class="text-indigo-400 font-mono">未選択</span>
+    </div>
+
+    <!-- reason -->
+    <input type="text" id="br-${task.id}" placeholder="理由メモ（任意・返答テンプレに反映されます）"
+           class="dark-input w-full text-xs px-2.5 py-1.5 rounded-lg mb-2">
+
+    <!-- submit -->
+    <button id="bs-${task.id}" onclick="submitBuffer('${task.id}')"
+            class="btn-primary w-full text-xs py-2 rounded-lg font-semibold">
+      再生成する →
+    </button>
+    <p id="bl-${task.id}" class="hidden text-xs text-slate-500 text-center mt-1 animate-pulse">再生成中...</p>
+  </div>
+
+</div>`;
+}
+
+// ============================================================
+// Warnings
+// ============================================================
+function renderWarnings(todayHours) {
+  const area = document.getElementById('warnings-area');
+  const msgs = [];
+
+  if (todayHours > 6) {
+    msgs.push(`<div class="text-xs px-4 py-2 bg-red-500/10 border-b border-red-500/20 text-red-400">
+      ⚠ 今日の作業が ${todayHours}時間 になっています（1日上限 6時間超過）
+    </div>`);
+  }
+
+  const movedCount = state.tasks.filter(t => t.autoMoved).length;
+  if (movedCount > 0) {
+    msgs.push(`<div class="text-xs px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/20 text-yellow-400">
+      ℹ ${movedCount}件のタスクを「今週」に自動移動しました（1日6時間上限）
+    </div>`);
+  }
+
+  area.innerHTML = msgs.join('');
+}
+
+// ============================================================
+// Task actions
+// ============================================================
+async function updateStatus(taskId, nextStatus) {
+  try {
+    const updated = await api('PUT', `/api/tasks/${taskId}/status`, { status: nextStatus });
+    replaceTask(updated);
+    renderBoard();
+  } catch (e) {
+    toast('ステータス更新エラー: ' + e.message, 'error');
+  }
+}
+
+function toggleBuffer(taskId) {
+  if (!bufferUI[taskId]) bufferUI[taskId] = {};
+  const panel = document.getElementById(`bp-${taskId}`);
+  if (!panel) return;
+  const isHidden = panel.classList.toggle('hidden');
+  bufferUI[taskId].open = !isHidden;
+}
+
+function switchBufType(taskId, type) {
+  if (!bufferUI[taskId]) bufferUI[taskId] = {};
+  bufferUI[taskId].type = type;
+  bufferUI[taskId].hours = null;
+  bufferUI[taskId].multiplier = null;
+  document.getElementById(`bh-${taskId}`)?.classList.toggle('hidden', type !== 'hours');
+  document.getElementById(`bm-${taskId}`)?.classList.toggle('hidden', type !== 'multiplier');
+  updateBufDisplay(taskId);
+}
+
+function setBufH(taskId, h, fromInput) {
+  if (!bufferUI[taskId]) bufferUI[taskId] = {};
+  bufferUI[taskId].hours = h;
+  bufferUI[taskId].multiplier = null;
+  if (!fromInput) {
+    const el = document.getElementById(`ch-${taskId}`);
+    if (el) el.value = '';
+  }
+  updateBufDisplay(taskId);
+}
+
+function setBufM(taskId, m, fromInput) {
+  if (!bufferUI[taskId]) bufferUI[taskId] = {};
+  bufferUI[taskId].multiplier = m;
+  bufferUI[taskId].hours = null;
+  if (!fromInput) {
+    const el = document.getElementById(`cm-${taskId}`);
+    if (el) el.value = '';
+  }
+  updateBufDisplay(taskId);
+}
+
+function updateBufDisplay(taskId) {
+  const bs = bufferUI[taskId] || {};
+  const el = document.getElementById(`bd-${taskId}`);
+  if (!el) return;
+  if (bs.hours != null)       el.textContent = `+${bs.hours}時間`;
+  else if (bs.multiplier != null) el.textContent = `×${bs.multiplier}倍`;
+  else                         el.textContent = '未選択';
+}
+
+async function submitBuffer(taskId) {
+  const bs = bufferUI[taskId] || {};
+  if (bs.hours == null && bs.multiplier == null) {
+    toast('バッファを選択してください', 'error');
+    return;
+  }
+
+  const reason = document.getElementById(`br-${taskId}`)?.value || '';
+  const buffer = {
+    hours:      bs.hours ?? null,
+    multiplier: bs.multiplier ?? null,
+    reason,
+  };
+
+  const submitBtn  = document.getElementById(`bs-${taskId}`);
+  const loadingEl  = document.getElementById(`bl-${taskId}`);
+  if (submitBtn) submitBtn.classList.add('hidden');
+  if (loadingEl) loadingEl.classList.remove('hidden');
+
+  try {
+    const updated = await api('POST', `/api/tasks/${taskId}/buffer`, { buffer });
+    replaceTask(updated);
+    bufferUI[taskId].open = false;
+    renderBoard();
+    toast('返答テンプレを再生成しました', 'success');
+  } catch (e) {
+    toast('バッファ適用エラー: ' + e.message, 'error');
+    if (submitBtn) submitBtn.classList.remove('hidden');
+    if (loadingEl) loadingEl.classList.add('hidden');
+  }
+}
+
+// ============================================================
+// Analyze
+// ============================================================
+async function analyzeTask() {
+  const msg = document.getElementById('message-input').value.trim();
+  if (!msg) { toast('メッセージを入力してください', 'error'); return; }
+  if (msg.length < 5) { toast('メッセージが短すぎます（5文字以上）', 'error'); return; }
+  if (!state.hasApiKey) { openModal(); return; }
+
+  state.loading = true;
+  const analyzeBtn = document.getElementById('analyze-btn');
+  analyzeBtn.disabled = true;
+  document.getElementById('skeleton-loader').classList.remove('hidden');
+  document.getElementById('empty-state').classList.add('hidden');
+
+  try {
+    await api('POST', '/api/analyze', { message: msg });
+    state.tasks = await api('GET', '/api/tasks');
+    document.getElementById('message-input').value = '';
+    document.getElementById('char-count').textContent = '0 / 500文字';
+    renderBoard();
+    toast('タスクを生成しました ✓', 'success');
+  } catch (e) {
+    toast('エラー: ' + e.message, 'error');
+  } finally {
+    state.loading = false;
+    analyzeBtn.disabled = false;
+    document.getElementById('skeleton-loader').classList.add('hidden');
+    if (!state.tasks.length) {
+      document.getElementById('empty-state').classList.remove('hidden');
+    }
+  }
+}
+
+// ============================================================
+// API Key modal
+// ============================================================
+const PROVIDER_PLACEHOLDERS = {
+  anthropic: 'sk-ant-api03-...',
+  gemini: 'AIzaSy...',
+};
+
+function onProviderChange(provider) {
+  document.getElementById('api-key-input').placeholder = PROVIDER_PLACEHOLDERS[provider] || '';
+}
+
+function openModal() {
+  // 現在のプロバイダーに合わせてラジオボタンを更新
+  const radios = document.querySelectorAll('input[name="modal-provider"]');
+  radios.forEach(r => { r.checked = r.value === state.provider; });
+  document.getElementById('api-key-input').placeholder = PROVIDER_PLACEHOLDERS[state.provider] || '';
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  setTimeout(() => document.getElementById('api-key-input').focus(), 50);
+}
+function closeModal() {
+  document.getElementById('modal-overlay').classList.add('hidden');
+}
+async function submitApiKey() {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (!key) { toast('APIキーを入力してください', 'error'); return; }
+  const provider = document.querySelector('input[name="modal-provider"]:checked')?.value || 'anthropic';
+  try {
+    await api('POST', '/api/set-key', { apiKey: key, provider });
+    state.hasApiKey = true;
+    state.provider = provider;
+    updateApiKeyUI();
+    closeModal();
+    const name = provider === 'gemini' ? 'Gemini' : 'Claude';
+    toast(`${name} APIキーを設定しました ✓`, 'success');
+  } catch (e) {
+    toast('設定エラー: ' + e.message, 'error');
+  }
+}
+function updateApiKeyUI() {
+  const dot = document.getElementById('api-key-dot');
+  dot.className = `w-2 h-2 rounded-full flex-none ${state.hasApiKey ? 'bg-green-400' : 'bg-red-500'}`;
+  const btn = document.getElementById('api-key-btn');
+  if (state.hasApiKey) {
+    const name = state.provider === 'gemini' ? 'Gemini' : 'Claude';
+    btn.textContent = `${name} キー設定済`;
+  } else {
+    btn.textContent = 'APIキー設定';
+  }
+}
+
+// ============================================================
+// Context (PROJECT.md)
+// ============================================================
+async function uploadContext(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch('/api/upload-context', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    state.hasContext = true;
+    state.contextFilename = data.filename;
+    updateContextBadge();
+    toast(`${data.filename} を読み込みました ✓`, 'success');
+  } catch (e) {
+    toast('コンテキスト読み込みエラー: ' + e.message, 'error');
+  }
+}
+async function removeContext() {
+  try {
+    await api('DELETE', '/api/context');
+    state.hasContext = false;
+    state.contextFilename = null;
+    updateContextBadge();
+    toast('コンテキストを削除しました', 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+function updateContextBadge() {
+  const badge     = document.getElementById('context-badge');
+  const removeBtn = document.getElementById('context-remove-btn');
+  if (state.hasContext) {
+    const name = state.contextFilename || 'コンテキスト適用中';
+    badge.textContent = `📄 ${name}`;
+    badge.className = 'text-xs px-3 py-1 rounded-full border border-green-600/50 text-green-400 bg-green-500/10 cursor-pointer select-none';
+    removeBtn.classList.remove('hidden');
+  } else {
+    badge.textContent = '📄 コンテキスト未設定';
+    badge.className = 'text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-500 hover:border-slate-500 transition-colors cursor-pointer select-none';
+    removeBtn.classList.add('hidden');
+  }
+}
+
+// ============================================================
+// Utils
+// ============================================================
+function toggle(id, arrowId) {
+  const el    = document.getElementById(id);
+  const arrow = document.getElementById(arrowId);
+  if (!el) return;
+  const hidden = el.classList.toggle('hidden');
+  if (arrow) arrow.textContent = hidden ? '▶' : '▼';
+}
+
+function copyEl(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    toast('コピーしました！', 'success');
+  }).catch(() => {
+    toast('コピーに失敗しました', 'error');
+  });
+}
+
+function esc(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function replaceTask(updated) {
+  const idx = state.tasks.findIndex(t => t.id === updated.id);
+  if (idx >= 0) state.tasks[idx] = updated;
+}
+
+function toast(msg, type = 'info') {
+  const colors = {
+    success: 'bg-green-500/20 border-green-500/40 text-green-300',
+    error:   'bg-red-500/20 border-red-500/40 text-red-300',
+    info:    'bg-indigo-500/20 border-indigo-500/40 text-indigo-300',
+  };
+  const el = document.createElement('div');
+  el.className = `toast-item pointer-events-auto px-4 py-2 rounded-xl border text-sm max-w-xs ${colors[type] || colors.info}`;
+  el.style.background = '#1E293B';
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ============================================================
+// Event Listeners
+// ============================================================
+document.addEventListener('DOMContentLoaded', () => {
+  init();
+
+  // Analyze
+  document.getElementById('analyze-btn').addEventListener('click', analyzeTask);
+  document.getElementById('message-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) analyzeTask();
+  });
+  document.getElementById('message-input').addEventListener('input', e => {
+    const len = e.target.value.length;
+    const el  = document.getElementById('char-count');
+    el.textContent = `${len} / 500文字`;
+    el.className   = `text-xs ${len > 500 ? 'text-red-400' : 'text-slate-600'}`;
+  });
+
+  // API key modal
+  document.getElementById('api-key-btn').addEventListener('click', openModal);
+  document.getElementById('api-key-cancel').addEventListener('click', closeModal);
+  document.getElementById('api-key-submit').addEventListener('click', submitApiKey);
+  document.getElementById('api-key-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitApiKey();
+    if (e.key === 'Escape') closeModal();
+  });
+  document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
+  // Context file
+  document.getElementById('context-file-input').addEventListener('change', e => {
+    if (e.target.files[0]) uploadContext(e.target.files[0]);
+    e.target.value = '';
+  });
+  document.getElementById('context-remove-btn').addEventListener('click', removeContext);
+
+  // Clear all
+  document.getElementById('clear-btn').addEventListener('click', async () => {
+    if (!confirm('全タスクを削除しますか？')) return;
+    try {
+      await api('DELETE', '/api/tasks/clear');
+      state.tasks = [];
+      renderBoard();
+      toast('タスクをクリアしました', 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  });
+
+  // Drag & drop PROJECT.md onto the page
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop', e => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file && (file.name.endsWith('.md') || file.name.endsWith('.txt'))) {
+      uploadContext(file);
+    }
+  });
+});
+</script>
+</body>
+</html>
