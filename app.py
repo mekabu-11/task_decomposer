@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import time
 from datetime import datetime
@@ -27,7 +26,7 @@ _api_key: dict = {
 _project_context: dict = {"content": None, "filename": None}
 
 # -------------------------------------------------------------------
-# System Prompt (設計書より)
+# System Prompt
 # -------------------------------------------------------------------
 SYSTEM_PROMPT = """あなたは事業会社のエンジニアリングマネージャーです。
 インフラからアプリまで横断的に担当するエンジニアへの依頼メッセージを受け取り、
@@ -35,48 +34,40 @@ SYSTEM_PROMPT = """あなたは事業会社のエンジニアリングマネー�
 
 {
   "title": "タスクのタイトル（20文字以内）",
-  "summary": "タスクの概要（50文字程度）",
-  "subtasks": [
+  "totalHours": 合計時間（数値・0.5刻み）,
+  "estimatedDays": 実働日数（1日6時間換算・整数）,
+  "steps": [
     {
-      "id": "sub_1",
-      "title": "サブタスク名（具体的な作業単位）",
-      "hours": 作業時間（数値・0.5刻み）,
-      "layer": "infra" または "app" または "both"
+      "order": 1,
+      "title": "具体的な作業手順名",
+      "hours": 作業時間（数値・0.5刻み）
     }
   ],
-  "totalHours": 合計時間（数値）,
-  "estimatedDays": 実働日数（1日6時間換算・整数）,
-  "priority": {
-    "score": 優先度スコア（0〜100の整数）,
-    "level": "high" または "medium" または "low",
-    "urgency": 緊急度（1〜5の整数）,
-    "impact": 影響範囲の広さ（1〜5の整数）,
-    "complexity": 技術的複雑度（1〜5の整数）
+  "backlog": {
+    "background": "背景（なぜこのタスクが発生したか、現状の問題点を2〜3文で記述）",
+    "purpose": "目的（このタスクで何を達成するかを1〜2文で記述）",
+    "expectedBehavior": "期待動作（完了後にどう動作すべきかを箇条書きで記述）"
   },
-  "rationale": "工数・優先度の根拠説明（100〜150文字）。DB・本番・インフラなど具体的な要素に必ず言及すること。",
-  "replyTemplate": "依頼者へのSlack返信文（コピペできる形式・改行あり）。完了予定日時の目安を必ず含めること。",
-  "schedule": "today" または "this_week" または "next_week"
+  "slackReply": "依頼者へのSlack返信文（コピペできる形式・改行あり）。完了予定日時の目安を必ず含めること。"
 }
 
-【優先度スコア算出基準】
-score = (urgency × 15) + (impact × 10) + (urgency === 5 ? 25 : 0)
-- 本番障害・セキュリティ関連は urgency=5 固定
+【steps（作業手順）について】
+- 実際に手を動かす順番に並べること
+- 各stepは1つの具体的な作業単位（調査、実装、テスト、デプロイなど）
+- hoursの合計がtotalHoursと一致すること
 
-【schedule判定基準】
-- urgency >= 4 または 本番障害 → "today"
-- urgency = 3 → "this_week"
-- urgency <= 2 → "next_week"
+【backlog（チケット記述）について】
+- background: 現状の問題・経緯を客観的に記述
+- purpose: 達成すべきゴールを簡潔に記述
+- expectedBehavior: 完了条件を箇条書きで明確に記述
 """
 
-BUFFER_PROMPT = """以下のタスク情報とバッファ内容をもとに、依頼者へのSlack返信文を再生成してください。
-バッファの理由を自然な文体で組み込み、コピペできる形式で返してください。
-返答はテキストのみ（JSONや説明文不要）。
-
-タスク: {title}
-元の工数: {total_hours}時間
-バッファ後工数: {adjusted_hours}時間（{adjusted_days}日）
-バッファ理由: {reason}
-元の返答テンプレ: {reply_template}
+BUFFER_HINT = """
+【バッファについて】
+依頼者が工数に+{buffer_desc}のバッファを希望しています。
+- totalHoursにバッファを含めた合計値を設定すること
+- stepsの時間合計もtotalHoursと一致させること（調査・テスト・レビューなど余裕を持たせる）
+- slackReplyの完了予定もバッファ込みの工数で記述すること
 """
 
 
@@ -113,44 +104,15 @@ def call_ai(prompt: str, system: str = None, max_tokens: int = 1024) -> str:
         return response.content[0].text
 
 
-def recalculate_schedule(task_list: list) -> tuple[list, int]:
-    """1日6時間上限を超えた場合、高優先度でないタスクを今週に移動する"""
-    today_hours = sum(
-        t["totalHours"]
-        for t in task_list
-        if t["schedule"] == "today" and t["status"] != "done"
-    )
-    if today_hours <= 6:
-        return task_list, 0
-
-    moved_count = 0
-    result = []
-    for t in task_list:
-        if t["schedule"] == "today" and t["priority"]["level"] != "high":
-            result.append({**t, "schedule": "this_week", "autoMoved": True})
-            moved_count += 1
-        else:
-            result.append(t)
-    return result, moved_count
-
-
-def apply_buffer_calc(task: dict, buffer: dict) -> dict:
-    """バッファを適用して調整後工数・日数を計算する"""
+def format_buffer_desc(buffer: dict) -> str:
+    """バッファの説明文を生成"""
     hours = buffer.get("hours")
     multiplier = buffer.get("multiplier")
-
     if multiplier:
-        adjusted = round(float(task["totalHours"]) * float(multiplier) * 2) / 2
-    else:
-        adjusted = float(task["totalHours"]) + float(hours or 0)
-
-    adjusted_days = math.ceil(adjusted / 6)
-    return {
-        **task,
-        "buffer": buffer,
-        "adjustedTotalHours": adjusted,
-        "adjustedDays": adjusted_days,
-    }
+        return f"×{multiplier}倍"
+    elif hours:
+        return f"{hours}時間"
+    return ""
 
 
 def clean_json_response(text: str) -> str:
@@ -196,11 +158,20 @@ def analyze():
 
     data = request.json or {}
     message = data.get("message", "").strip()
+    buffer = data.get("buffer")  # { hours: N } or { multiplier: N } or null
     if not message:
         return jsonify({"error": "メッセージを入力してください"}), 400
 
-    # PROJECT.md コンテキストを System Prompt に注入
+    # System Prompt構築
     system = SYSTEM_PROMPT
+
+    # バッファ指示をプロンプトに追加
+    if buffer:
+        desc = format_buffer_desc(buffer)
+        if desc:
+            system += BUFFER_HINT.format(buffer_desc=desc)
+
+    # PROJECT.md コンテキストを System Prompt に注入
     if _project_context["content"]:
         system += (
             "\n\n【プロジェクト固有の前提情報】\n"
@@ -217,18 +188,12 @@ def analyze():
             "id": task_id,
             "originalMessage": message,
             "createdAt": datetime.now().isoformat(),
-            "status": "pending",
-            "autoMoved": False,
+            "buffer": buffer,
             **parsed,
         }
         _tasks[task_id] = task
 
-        # スケジュール再計算
-        task_list, moved_count = recalculate_schedule(list(_tasks.values()))
-        _tasks.clear()
-        _tasks.update({t["id"]: t for t in task_list})
-
-        return jsonify({"task": _tasks[task_id], "autoMovedCount": moved_count})
+        return jsonify({"task": task})
 
     except json.JSONDecodeError as e:
         return jsonify({"error": f"AIの返答をJSONとしてパースできませんでした: {e}"}), 500
@@ -238,7 +203,6 @@ def analyze():
         return jsonify({"error": "APIレート制限に達しました。しばらく待ってから再試行してください。"}), 429
     except Exception as e:
         err = str(e).lower()
-        # デバッグ用ログ（原因特定後に削除すること）
         import traceback
         print(f"[DEBUG] type={type(e).__name__}")
         print(f"[DEBUG] message={e}")
@@ -259,47 +223,6 @@ def get_tasks():
 def clear_tasks():
     _tasks.clear()
     return jsonify({"ok": True})
-
-
-@app.route("/api/tasks/<task_id>/status", methods=["PUT"])
-def update_status(task_id):
-    if task_id not in _tasks:
-        return jsonify({"error": "Task not found"}), 404
-    data = request.json or {}
-    _tasks[task_id]["status"] = data.get("status", "pending")
-    return jsonify(_tasks[task_id])
-
-
-@app.route("/api/tasks/<task_id>/buffer", methods=["POST"])
-def apply_task_buffer(task_id):
-    if task_id not in _tasks:
-        return jsonify({"error": "Task not found"}), 404
-
-    api_key = _api_key["value"]
-    if not api_key:
-        return jsonify({"error": "APIキーが設定されていません"}), 400
-
-    data = request.json or {}
-    buffer = data.get("buffer", {})
-
-    task = apply_buffer_calc(_tasks[task_id], buffer)
-
-    prompt = BUFFER_PROMPT.format(
-        title=task["title"],
-        total_hours=task["totalHours"],
-        adjusted_hours=task["adjustedTotalHours"],
-        adjusted_days=task["adjustedDays"],
-        reason=buffer.get("reason") or "未設定",
-        reply_template=task["replyTemplate"],
-    )
-
-    try:
-        task["adjustedReplyTemplate"] = call_ai(prompt, max_tokens=512).strip()
-    except Exception:
-        task["adjustedReplyTemplate"] = task["replyTemplate"]
-
-    _tasks[task_id] = task
-    return jsonify(task)
 
 
 @app.route("/api/upload-context", methods=["POST"])
