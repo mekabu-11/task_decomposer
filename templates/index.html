@@ -3,32 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AIタスク司令塔</title>
+  <title>Task Decomposer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root { --bg: #0F172A; --card: #1E293B; --accent: #6366F1; }
-    body { background: var(--bg); color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+    :root { --bg: #1a1a1a; --card: #242424; --border: #333; --accent: #d4a574; --accent-dim: rgba(212,165,116,0.15); }
+    body { background: var(--bg); color: #d4d4d4; font-family: system-ui, -apple-system, sans-serif; }
     .card { background: var(--card); }
     .dark-input {
-      background: #0F172A;
-      border: 1px solid #334155;
-      color: #e2e8f0;
+      background: #1a1a1a;
+      border: 1px solid var(--border);
+      color: #d4d4d4;
       transition: border-color 0.15s;
     }
-    .dark-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
-    .dark-input::placeholder { color: #475569; }
-    .skeleton { background: linear-gradient(90deg, #1E293B 25%, #2d3f55 50%, #1E293B 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+    .dark-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(212,165,116,0.1); }
+    .dark-input::placeholder { color: #555; }
+    .skeleton { background: linear-gradient(90deg, #242424 25%, #2e2e2e 50%, #242424 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
     @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-    .btn-primary { background: var(--accent); color: white; transition: background 0.15s; }
-    .btn-primary:hover { background: #4f46e5; }
-    .btn-primary:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #1a1a1a; font-weight: 600; transition: all 0.15s; }
+    .btn-primary:hover { background: #e0b68a; }
+    .btn-primary:disabled { background: #333; color: #555; cursor: not-allowed; }
     .toast-item { animation: slideIn 0.2s ease; }
     @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     textarea { resize: vertical; }
     .buf-btn { transition: all 0.15s; }
-    .buf-btn.active { background: rgba(99,102,241,0.3); border-color: rgba(99,102,241,0.6); color: #a5b4fc; }
-    .section-box { border-left: 3px solid; }
+    .buf-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
     .copy-btn:active { transform: scale(0.95); }
+    .step-desc { color: #888; }
   </style>
 </head>
 <body class="min-h-screen">
@@ -38,21 +38,21 @@
 
 <!-- API Key Modal -->
 <div id="modal-overlay" class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40 hidden">
-  <div class="card rounded-2xl p-6 w-full max-w-md mx-4 border border-slate-700">
+  <div class="card rounded-2xl p-6 w-full max-w-md mx-4" style="border:1px solid var(--border)">
     <h2 class="text-base font-bold mb-1">APIキーを設定</h2>
-    <p class="text-xs text-slate-400 mb-3 leading-relaxed">
+    <p class="text-xs mb-3 leading-relaxed" style="color:#888">
       使用するAIプロバイダーとAPIキーを入力してください。<br>
       キーはサーバーメモリのみに保持され、永続化・ログ出力は行いません。
     </p>
     <div class="flex gap-4 mb-3">
       <label class="flex items-center gap-1.5 text-sm cursor-pointer">
         <input type="radio" name="modal-provider" value="anthropic" checked
-               onchange="onProviderChange('anthropic')" class="accent-indigo-500">
+               onchange="onProviderChange('anthropic')" style="accent-color:var(--accent)">
         Claude (Anthropic)
       </label>
       <label class="flex items-center gap-1.5 text-sm cursor-pointer">
         <input type="radio" name="modal-provider" value="gemini"
-               onchange="onProviderChange('gemini')" class="accent-indigo-500">
+               onchange="onProviderChange('gemini')" style="accent-color:var(--accent)">
         Gemini (Google)
       </label>
     </div>
@@ -63,10 +63,10 @@
       class="dark-input w-full px-3 py-2 rounded-lg text-sm mb-4 font-mono"
     >
     <div class="flex gap-2 justify-end">
-      <button id="api-key-cancel" class="text-sm px-4 py-2 rounded-lg text-slate-400 hover:text-white transition-colors">
+      <button id="api-key-cancel" class="text-sm px-4 py-2 rounded-lg hover:text-white transition-colors" style="color:#888">
         キャンセル
       </button>
-      <button id="api-key-submit" class="btn-primary text-sm px-5 py-2 rounded-lg font-semibold">
+      <button id="api-key-submit" class="btn-primary text-sm px-5 py-2 rounded-lg">
         設定する
       </button>
     </div>
@@ -74,33 +74,33 @@
 </div>
 
 <!-- Header -->
-<header class="border-b border-slate-800 px-4 py-3 flex items-center gap-3 flex-wrap">
+<header class="px-4 py-3 flex items-center gap-3 flex-wrap" style="border-bottom:1px solid var(--border)">
   <div class="flex items-center gap-2 mr-auto">
-    <span class="text-lg font-bold tracking-tight">AIタスク司令塔</span>
-    <span class="text-xs text-slate-600 hidden sm:block">Slackの依頼をAIがタスク分解</span>
+    <span class="text-lg font-bold tracking-tight" style="color:#e5e5e5">Task Decomposer</span>
+    <span class="text-xs hidden sm:block" style="color:#555">Slackの依頼をタスク分解</span>
   </div>
 
   <!-- PROJECT.md context -->
   <div class="flex items-center gap-1">
     <label class="cursor-pointer">
-      <span id="context-badge" class="text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-500 hover:border-slate-500 transition-colors cursor-pointer select-none">
+      <span id="context-badge" class="text-xs px-3 py-1 rounded-full cursor-pointer select-none" style="border:1px solid var(--border); color:#666">
         コンテキスト未設定
       </span>
       <input type="file" id="context-file-input" accept=".md,.txt" class="hidden">
     </label>
-    <button id="context-remove-btn" class="hidden text-xs text-slate-600 hover:text-red-400 transition-colors px-1" title="削除">✕</button>
+    <button id="context-remove-btn" class="hidden text-xs hover:text-red-400 transition-colors px-1" style="color:#555" title="削除">✕</button>
   </div>
 
   <!-- API key status -->
   <div class="flex items-center gap-2">
     <span id="api-key-dot" class="w-2 h-2 rounded-full bg-red-500 flex-none"></span>
-    <button id="api-key-btn" class="text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-400 hover:border-indigo-500 hover:text-indigo-400 transition-colors">
+    <button id="api-key-btn" class="text-xs px-3 py-1 rounded-full transition-colors" style="border:1px solid var(--border); color:#888">
       APIキー設定
     </button>
   </div>
 
   <!-- Clear -->
-  <button id="clear-btn" class="text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-500 hover:border-red-500 hover:text-red-400 transition-colors">
+  <button id="clear-btn" class="text-xs px-3 py-1 rounded-full hover:text-red-400 transition-colors" style="border:1px solid var(--border); color:#555">
     全クリア
   </button>
 </header>
@@ -109,7 +109,7 @@
 <main class="px-4 py-4 max-w-3xl mx-auto">
 
   <!-- Input Panel -->
-  <div class="card rounded-2xl p-4 mb-5 border border-slate-700/50">
+  <div class="card rounded-2xl p-4 mb-5" style="border:1px solid var(--border)">
     <textarea
       id="message-input"
       rows="4"
@@ -119,25 +119,25 @@
 
     <!-- Buffer selection -->
     <div class="flex items-center gap-2 mt-3 flex-wrap">
-      <span class="text-xs text-slate-500 flex-none">バッファ:</span>
-      <button onclick="selectBuffer(null)"     class="buf-btn active text-xs px-2.5 py-1 rounded-lg border border-slate-700 text-slate-400">なし</button>
-      <button onclick="selectBuffer({hours:2})"  class="buf-btn text-xs px-2.5 py-1 rounded-lg border border-slate-700 text-slate-400">+2h</button>
-      <button onclick="selectBuffer({hours:4})"  class="buf-btn text-xs px-2.5 py-1 rounded-lg border border-slate-700 text-slate-400">+4h</button>
-      <button onclick="selectBuffer({multiplier:1.5})" class="buf-btn text-xs px-2.5 py-1 rounded-lg border border-slate-700 text-slate-400">×1.5</button>
+      <span class="text-xs flex-none" style="color:#666">バッファ:</span>
+      <button onclick="selectBuffer(null)"     class="buf-btn active text-xs px-2.5 py-1 rounded-lg" style="border:1px solid var(--border); color:#888">なし</button>
+      <button onclick="selectBuffer({hours:2})"  class="buf-btn text-xs px-2.5 py-1 rounded-lg" style="border:1px solid var(--border); color:#888">+2h</button>
+      <button onclick="selectBuffer({hours:4})"  class="buf-btn text-xs px-2.5 py-1 rounded-lg" style="border:1px solid var(--border); color:#888">+4h</button>
+      <button onclick="selectBuffer({multiplier:1.5})" class="buf-btn text-xs px-2.5 py-1 rounded-lg" style="border:1px solid var(--border); color:#888">×1.5</button>
       <div class="flex items-center gap-1">
         <input type="number" id="custom-buffer" min="0" step="0.5" placeholder="カスタム"
                oninput="onCustomBuffer()"
                class="dark-input text-xs px-2 py-1 rounded-lg w-20 font-mono">
-        <span class="text-xs text-slate-600">h</span>
+        <span class="text-xs" style="color:#555">h</span>
       </div>
     </div>
 
     <div class="flex justify-between items-center mt-3">
-      <span id="char-count" class="text-xs text-slate-600">0 / 500文字</span>
+      <span id="char-count" class="text-xs" style="color:#555">0 / 500文字</span>
       <div class="flex items-center gap-3">
-        <span class="text-xs text-slate-700">Cmd+Enter で送信</span>
-        <button id="analyze-btn" class="btn-primary flex-none px-5 py-2 rounded-xl font-semibold text-sm whitespace-nowrap">
-          AI分解する
+        <span class="text-xs" style="color:#444">Cmd+Enter で送信</span>
+        <button id="analyze-btn" class="btn-primary flex-none px-5 py-2 rounded-xl text-sm whitespace-nowrap">
+          分解する
         </button>
       </div>
     </div>
@@ -145,13 +145,13 @@
 
   <!-- Skeleton loader -->
   <div id="skeleton-loader" class="hidden mb-5">
-    <p class="text-xs text-slate-500 text-center mb-3 animate-pulse">AIが分析中...</p>
+    <p class="text-xs text-center mb-3 animate-pulse" style="color:#666">分析中...</p>
     <div class="skeleton rounded-2xl h-64 w-full"></div>
   </div>
 
   <!-- Empty state -->
-  <div id="empty-state" class="text-center py-24 text-slate-700">
-    <p class="text-sm">依頼メッセージを入力して「AI分解する」を押してみましょう</p>
+  <div id="empty-state" class="text-center py-24" style="color:#444">
+    <p class="text-sm">依頼メッセージを入力して「分解する」を押してみましょう</p>
   </div>
 
   <!-- Results area -->
@@ -170,7 +170,7 @@ const state = {
   hasContext: false,
   contextFilename: null,
   loading: false,
-  buffer: null,  // { hours: N } or { multiplier: N } or null
+  buffer: null,
 };
 
 // ============================================================
@@ -243,7 +243,6 @@ function updateBufferButtons() {
   } else if (state.buffer.multiplier === 1.5) {
     btns[3].classList.add('active');
   }
-  // custom input → no preset button active
 }
 
 // ============================================================
@@ -258,17 +257,23 @@ function renderResults() {
 
   if (!hasTasks) { area.innerHTML = ''; return; }
 
-  // Render newest first
   const sorted = [...state.tasks].reverse();
   area.innerHTML = sorted.map(renderTask).join('');
 }
 
 function renderTask(task) {
   const stepsHtml = (task.steps || []).map(s => `
-    <li class="flex items-center gap-3 py-1.5 text-sm text-slate-300">
-      <span class="text-xs font-mono text-slate-600 flex-none w-5 text-right">${s.order}.</span>
-      <span class="flex-1">${esc(s.title)}</span>
-      <span class="font-mono text-xs text-slate-500 flex-none">${s.hours}h</span>
+    <li class="py-2" style="border-bottom:1px solid #2a2a2a">
+      <div class="flex items-start gap-3">
+        <span class="text-xs font-mono flex-none w-5 text-right mt-0.5" style="color:#555">${s.order}.</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm" style="color:#ccc">${esc(s.title)}</span>
+            <span class="font-mono text-xs flex-none" style="color:#666">${s.hours}h</span>
+          </div>
+          ${s.description ? `<p class="text-xs mt-1 step-desc leading-relaxed">${esc(s.description)}</p>` : ''}
+        </div>
+      </div>
     </li>
   `).join('');
 
@@ -280,44 +285,44 @@ function renderTask(task) {
     : '';
 
   return `
-<div class="card rounded-2xl border border-slate-700/40 overflow-hidden" data-id="${task.id}">
+<div class="card rounded-2xl overflow-hidden" style="border:1px solid var(--border)" data-id="${task.id}">
 
   <!-- Header -->
-  <div class="px-5 py-4 border-b border-slate-700/40 flex items-center justify-between">
-    <h2 class="font-semibold text-base">${esc(task.title)}</h2>
+  <div class="px-5 py-4 flex items-center justify-between" style="border-bottom:1px solid var(--border)">
+    <h2 class="font-semibold text-base" style="color:#e5e5e5">${esc(task.title)}</h2>
     <div class="flex items-center gap-2">
-      ${bufferLabel ? `<span class="text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-400 bg-orange-500/10">バッファ ${bufferLabel}</span>` : ''}
-      <span class="text-lg font-mono font-bold text-indigo-400">${task.totalHours}h</span>
-      <span class="text-xs text-slate-500">(${task.estimatedDays}日)</span>
+      ${bufferLabel ? `<span class="text-xs px-2 py-0.5 rounded-full" style="border:1px solid #665533; color:var(--accent); background:var(--accent-dim)">バッファ ${bufferLabel}</span>` : ''}
+      <span class="text-lg font-mono font-bold" style="color:var(--accent)">${task.totalHours}h</span>
+      <span class="text-xs" style="color:#666">(${task.estimatedDays}日)</span>
     </div>
   </div>
 
   <!-- Steps -->
-  <div class="px-5 py-4 border-b border-slate-700/40">
-    <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">作業手順</h3>
-    <ol class="space-y-0.5">
+  <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
+    <h3 class="text-xs font-semibold uppercase tracking-wider mb-2" style="color:#666">作業手順</h3>
+    <ol class="list-none">
       ${stepsHtml}
     </ol>
   </div>
 
   <!-- Backlog ticket -->
-  <div class="px-5 py-4 border-b border-slate-700/40">
+  <div class="px-5 py-4" style="border-bottom:1px solid var(--border)">
     <div class="flex items-center justify-between mb-3">
-      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Backlogチケット</h3>
-      <button onclick="copyText(\`${esc(backlogText).replace(/`/g, '\\`')}\`)" class="copy-btn text-xs text-indigo-400 hover:text-indigo-300 transition-colors">コピー</button>
+      <h3 class="text-xs font-semibold uppercase tracking-wider" style="color:#666">Backlogチケット</h3>
+      <button onclick="copyText(\`${esc(backlogText).replace(/`/g, '\\`')}\`)" class="copy-btn text-xs transition-colors" style="color:var(--accent)">コピー</button>
     </div>
-    <div class="text-sm leading-relaxed space-y-3 p-3 rounded-lg border border-slate-700/50" style="background:#0F172A">
+    <div class="text-sm leading-relaxed space-y-3 p-3 rounded-lg" style="background:#1a1a1a; border:1px solid var(--border)">
       <div>
-        <div class="font-semibold text-slate-300 mb-1">## 背景</div>
-        <div class="text-slate-400">${esc(backlog.background || '')}</div>
+        <div class="font-semibold mb-1" style="color:#aaa">## 背景</div>
+        <div style="color:#888">${esc(backlog.background || '')}</div>
       </div>
       <div>
-        <div class="font-semibold text-slate-300 mb-1">## 目的</div>
-        <div class="text-slate-400">${esc(backlog.purpose || '')}</div>
+        <div class="font-semibold mb-1" style="color:#aaa">## 目的</div>
+        <div style="color:#888">${esc(backlog.purpose || '')}</div>
       </div>
       <div>
-        <div class="font-semibold text-slate-300 mb-1">## 期待動作</div>
-        <div class="text-slate-400 whitespace-pre-wrap">${esc(backlog.expectedBehavior || '')}</div>
+        <div class="font-semibold mb-1" style="color:#aaa">## 期待動作</div>
+        <div class="whitespace-pre-wrap" style="color:#888">${esc(backlog.expectedBehavior || '')}</div>
       </div>
     </div>
   </div>
@@ -325,10 +330,10 @@ function renderTask(task) {
   <!-- Slack reply -->
   <div class="px-5 py-4">
     <div class="flex items-center justify-between mb-3">
-      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Slack返信</h3>
-      <button onclick="copyEl('sr-${task.id}')" class="copy-btn text-xs text-indigo-400 hover:text-indigo-300 transition-colors">コピー</button>
+      <h3 class="text-xs font-semibold uppercase tracking-wider" style="color:#666">Slack返信</h3>
+      <button onclick="copyEl('sr-${task.id}')" class="copy-btn text-xs transition-colors" style="color:var(--accent)">コピー</button>
     </div>
-    <pre id="sr-${task.id}" class="text-sm rounded-lg p-3 whitespace-pre-wrap text-slate-300 leading-relaxed border border-slate-700/50 select-all" style="background:#0F172A">${esc(task.slackReply || '')}</pre>
+    <pre id="sr-${task.id}" class="text-sm rounded-lg p-3 whitespace-pre-wrap leading-relaxed select-all" style="background:#1a1a1a; border:1px solid var(--border); color:#aaa">${esc(task.slackReply || '')}</pre>
   </div>
 
 </div>`;
@@ -457,11 +462,15 @@ function updateContextBadge() {
   if (state.hasContext) {
     const name = state.contextFilename || 'コンテキスト適用中';
     badge.textContent = name;
-    badge.className = 'text-xs px-3 py-1 rounded-full border border-green-600/50 text-green-400 bg-green-500/10 cursor-pointer select-none';
+    badge.style.borderColor = '#4a7a4a';
+    badge.style.color = '#7ab87a';
+    badge.style.background = 'rgba(74,122,74,0.1)';
     removeBtn.classList.remove('hidden');
   } else {
     badge.textContent = 'コンテキスト未設定';
-    badge.className = 'text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-500 hover:border-slate-500 transition-colors cursor-pointer select-none';
+    badge.style.borderColor = 'var(--border)';
+    badge.style.color = '#666';
+    badge.style.background = 'transparent';
     removeBtn.classList.add('hidden');
   }
 }
@@ -497,13 +506,13 @@ function esc(str) {
 
 function toast(msg, type = 'info') {
   const colors = {
-    success: 'bg-green-500/20 border-green-500/40 text-green-300',
-    error:   'bg-red-500/20 border-red-500/40 text-red-300',
-    info:    'bg-indigo-500/20 border-indigo-500/40 text-indigo-300',
+    success: 'border-color:#4a7a4a; color:#7ab87a',
+    error:   'border-color:#7a4a4a; color:#b87a7a',
+    info:    'border-color:#4a4a7a; color:#8888bb',
   };
   const el = document.createElement('div');
-  el.className = `toast-item pointer-events-auto px-4 py-2 rounded-xl border text-sm max-w-xs ${colors[type] || colors.info}`;
-  el.style.background = '#1E293B';
+  el.className = 'toast-item pointer-events-auto px-4 py-2 rounded-xl text-sm max-w-xs';
+  el.style.cssText = `background:#242424; border:1px solid; ${colors[type] || colors.info}`;
   el.textContent = msg;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => el.remove(), 3500);
@@ -524,7 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const len = e.target.value.length;
     const el  = document.getElementById('char-count');
     el.textContent = `${len} / 500文字`;
-    el.className   = `text-xs ${len > 500 ? 'text-red-400' : 'text-slate-600'}`;
+    el.style.color = len > 500 ? '#b87a7a' : '#555';
   });
 
   // API key modal
