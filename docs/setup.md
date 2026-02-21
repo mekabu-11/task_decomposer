@@ -47,14 +47,14 @@ python3 app.py
 
 ```
 ==================================================
-  AIタスク司令塔
+  Task Decomposer
 ==================================================
-ブラウザで http://localhost:5000 を開いてください
+ブラウザで http://localhost:5001 を開いてください
 停止: Ctrl+C
 ==================================================
 ```
 
-ブラウザで `http://localhost:5000` を開く。
+ブラウザで `http://localhost:5001` を開く。
 **初回起動時はAPIキー入力モーダルが自動で開く。**
 
 ---
@@ -110,24 +110,19 @@ python3 -m pip install -r requirements.txt
 
 インストールが完了していない。再度 `pip3 install -r requirements.txt` を実行する。
 
-### `Address already in use` (ポート5000が使用中)
+### `Address already in use` (ポート5001が使用中)
 
-別のプロセスがポート5000を使用している。
+別のプロセスがポート5001を使用している。
 
 ```bash
 # 使用中のプロセスを確認
-lsof -i :5000
+lsof -i :5001
 
 # 該当プロセスを終了
 kill -9 <PID>
 ```
 
-または `app.py` 末尾の `port=5000` を別のポート番号に変更する。
-
-### macOS で `5000番ポートが使用できない`
-
-macOS Monterey 以降、AirPlay Receiver がポート5000を使用する場合がある。
-「システム設定 → 一般 → AirDrop と Handoff → AirPlay Receiver」をオフにするか、ポート番号を変更する。
+または `app.py` 末尾の `port=5001` を別のポート番号に変更する。
 
 ### APIキーエラー（401）
 

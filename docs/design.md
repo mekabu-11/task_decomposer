@@ -9,7 +9,7 @@
 │   (Vanilla JS + Tailwind CSS CDN)       │
 └──────────────┬──────────────────────────┘
                │ fetch API (JSON / FormData)
-               │ http://localhost:5000
+               │ http://localhost:5001
 ┌──────────────▼──────────────────────────┐
 │         Flask サーバー                    │
 │              app.py                     │
@@ -20,7 +20,7 @@
 │  │ _tasks      │  │ ・anthropic SDK  │  │
 │  │ _api_key    │  │   (claude-sonnet)│  │
 │  │  .provider  │  │ ・google-genai   │  │
-│  │ _project    │  │   (gemini-2.0)   │  │
+│  │ _project    │  │   (gemini-3)     │  │
 │  │  _context   │  └──────────────────┘  │
 │  └─────────────┘                        │
 └─────────────────────────────────────────┘
@@ -29,8 +29,8 @@
 **設計方針：**
 
 - **ローカル完結** — 外部DB・外部サービスへの依存なし。Flask をローカルで起動するだけ。
-- **サーバーサイド API 呼び出し** — Claude API は Flask 経由で呼び出す。ブラウザからAPIキーが直接送出されない。
-- **インメモリストレージ** — タスク・APIキー・PROJECT.mdはすべてPython `dict` に保持。再起動でリセット。シングルユーザー前提の割り切った設計。
+- **サーバーサイド API 呼び出し** — AI APIはFlask経由で呼び出す。ブラウザからAPIキーが直接送出されない。
+- **インメモリストレージ** — タスク・APIキー・コンテキストはすべてPython `dict` に保持。再起動でリセット。シングルユーザー前提の割り切った設計。
 - **REST API + SPA的フロントエンド** — ブラウザ側は `fetch` でFlaskと通信し、DOMを動的に再描画する。ページ遷移なし。
 
 ---
@@ -59,7 +59,7 @@ analyzer_for_log/
 | 項目 | 採用技術 | 理由 |
 |---|---|---|
 | バックエンド | Python 3 + Flask | シンプルな構成で素早く実装できる |
-| AI | Claude (`claude-sonnet-4-5`) または Gemini (`gemini-2.0-flash`) | プロバイダーをUIから切り替え可能 |
+| AI | Claude (`claude-sonnet-4-5`) または Gemini (`gemini-3-flash-preview`) | プロバイダーをUIから切り替え可能 |
 | フロントエンド | Vanilla JS (ES2020) | フレームワーク不要。ローカル用なので依存を最小化 |
 | スタイリング | Tailwind CSS (Play CDN) | CDN経由でビルドステップ不要 |
 | データ保持 | Python dict（インメモリ） | ローカル単一ユーザーのため永続化不要と割り切り |
@@ -75,38 +75,55 @@ analyzer_for_log/
   "id": "task_1720000000000",
   "originalMessage": "認証周りのバグ直してほしい。本番で出てるやつ",
   "createdAt": "2025-01-15T10:00:00",
-  "status": "pending",
-  "autoMoved": false,
+  "buffer": { "hours": 4 },
 
   "title": "本番環境の認証バグ修正",
-  "summary": "本番環境で発生している認証エラーの調査・修正・デプロイ対応",
-  "subtasks": [
-    { "id": "sub_1", "title": "エラーログの調査・原因特定", "hours": 1.5, "layer": "infra" },
-    { "id": "sub_2", "title": "修正コードの実装・単体テスト", "hours": 3.0, "layer": "app"   },
-    { "id": "sub_3", "title": "ステージング環境での確認",    "hours": 1.0, "layer": "infra" },
-    { "id": "sub_4", "title": "本番デプロイ・動作確認",      "hours": 0.5, "layer": "infra" }
+  "totalHours": 10.0,
+  "estimatedDays": 2,
+  "steps": [
+    {
+      "order": 1,
+      "title": "エラーログの確認",
+      "description": "CloudWatch Logsで直近24時間の認証関連エラーを検索し、発生パターンを特定する",
+      "hours": 1.0
+    },
+    {
+      "order": 2,
+      "title": "原因調査・コード解析",
+      "description": "ログから特定したエラー箇所のソースコードを追跡し、根本原因を特定する",
+      "hours": 2.0
+    },
+    {
+      "order": 3,
+      "title": "修正コードの実装",
+      "description": "認証ロジックの修正を実装。関連するユニットテストも追加する",
+      "hours": 3.0
+    },
+    {
+      "order": 4,
+      "title": "ステージング環境での動作確認",
+      "description": "ステージングにデプロイし、認証フロー全体を手動テストで確認する",
+      "hours": 1.5
+    },
+    {
+      "order": 5,
+      "title": "コードレビュー依頼・対応",
+      "description": "PRを作成しレビュー依頼。指摘箇所を修正する",
+      "hours": 1.5
+    },
+    {
+      "order": 6,
+      "title": "本番デプロイ・動作確認",
+      "description": "本番環境にデプロイし、認証エラーが解消されたことをログで確認する",
+      "hours": 1.0
+    }
   ],
-  "totalHours": 6.0,
-  "estimatedDays": 1,
-  "priority": {
-    "score": 100,
-    "level": "high",
-    "urgency": 5,
-    "impact": 5,
-    "complexity": 3
+  "backlog": {
+    "background": "本番環境で認証機能にエラーが発生しており、ユーザーがログインできない状態が断続的に発生している。",
+    "purpose": "認証エラーの根本原因を特定し修正することで、ユーザーが安定してログインできる状態に復旧する。",
+    "expectedBehavior": "- 認証エラーが解消され、全ユーザーが正常にログインできること\n- エラーログに認証関連のエラーが出力されないこと\n- ステージング・本番環境で動作確認が完了していること"
   },
-  "rationale": "本番障害のため緊急度が最高。認証は全ユーザーに影響するため影響範囲も最大。...",
-  "replyTemplate": "確認しました。本番障害のため最優先で対応します。\n本日中（〜18時目安）に完了予定です。",
-  "schedule": "today",
-
-  "buffer": {
-    "hours": 4,
-    "multiplier": null,
-    "reason": "レビュー待ち・環境不安定を考慮"
-  },
-  "adjustedTotalHours": 10.0,
-  "adjustedDays": 2,
-  "adjustedReplyTemplate": "確認しました。...バッファを含め2日（〜明日18時）で対応予定です。"
+  "slackReply": "お疲れ様です。認証周りの不具合の件、承知いたしました。\n最優先で調査と修正対応を開始します。\n\nバッファを含め2日（〜明後日18時目安）での完了を見込んでいます。\n進捗があり次第、再度こちらで共有させていただきます。"
 }
 ```
 
@@ -117,87 +134,50 @@ analyzer_for_log/
 | `id` | string | `task_{Unixミリ秒}` 形式の一意ID |
 | `originalMessage` | string | ユーザーが入力した元のSlackメッセージ |
 | `createdAt` | string | 生成日時（ISO 8601） |
-| `status` | `"pending"` \| `"in_progress"` \| `"done"` | タスクの進捗状態 |
-| `autoMoved` | boolean | スケジューラーによる自動移動フラグ |
+| `buffer` | object \| null | バッファ設定（`{ hours: N }` or `{ multiplier: N }` or null） |
 | `title` | string | AIが生成した20文字以内のタスク名 |
-| `summary` | string | 50文字程度の概要 |
-| `subtasks` | array | サブタスクの配列（後述） |
-| `totalHours` | number | AI算出の合計工数（時間） |
+| `totalHours` | number | AI算出の合計工数（時間・バッファ込み） |
 | `estimatedDays` | number | 1日6時間換算の実働日数（整数） |
-| `priority` | object | 優先度情報（後述） |
-| `rationale` | string | 工数・優先度の根拠説明（100〜150文字） |
-| `replyTemplate` | string | Slack返信テンプレート |
-| `schedule` | `"today"` \| `"this_week"` \| `"next_week"` | 配置カラム |
-| `buffer` | object \| null | バッファ設定（ユーザー入力後に付与） |
-| `adjustedTotalHours` | number \| null | バッファ適用後の合計工数 |
-| `adjustedDays` | number \| null | バッファ適用後の実働日数 |
-| `adjustedReplyTemplate` | string \| null | バッファ理由を含む再生成済み返答テンプレ |
+| `steps` | array | 作業手順の配列（後述） |
+| `backlog` | object | Backlogチケット用の記述（後述） |
+| `slackReply` | string | Slack返信テンプレート |
 
-### subtask フィールド
+### steps フィールド
 
 | フィールド | 型 | 説明 |
 |---|---|---|
-| `id` | string | `sub_1`, `sub_2`, ... |
-| `title` | string | 具体的な作業単位名 |
+| `order` | number | 手順の順番（1から連番） |
+| `title` | string | 作業手順名 |
+| `description` | string | 具体的な作業内容（ファイル名、コマンド、確認ポイントなど） |
 | `hours` | number | 作業時間（0.5刻み） |
-| `layer` | `"infra"` \| `"app"` \| `"both"` | 担当レイヤー |
 
-### priority フィールド
+### backlog フィールド
 
-| フィールド | 型 | 値域 | 説明 |
-|---|---|---|---|
-| `score` | number | 0〜100 | 総合優先度スコア |
-| `level` | string | `high` / `medium` / `low` | スコアのラベル |
-| `urgency` | number | 1〜5 | 緊急度。本番障害・セキュリティは5固定 |
-| `impact` | number | 1〜5 | 影響範囲の広さ |
-| `complexity` | number | 1〜5 | 技術的複雑度 |
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `background` | string | 背景（なぜこのタスクが発生したか） |
+| `purpose` | string | 目的（何を達成するか） |
+| `expectedBehavior` | string | 期待動作（完了後にどう動作すべきか） |
 
 ---
 
-## ビジネスロジック
+## バッファの仕組み
 
-### 優先度スコア算出
+バッファはAI分解前にユーザーが選択する。選択された場合、System Promptにバッファ指示が追加され、AIがバッファ込みの工数で全出力を生成する。
 
-```
-score = (urgency × 15) + (impact × 10) + (urgency == 5 ? 25 : 0)
-```
+**選択肢：**
+- なし（デフォルト）
+- 時間加算: +2h, +4h, カスタム
+- 倍率: ×1.5, カスタム
 
-- urgency が 5（本番障害・セキュリティ）の場合、ボーナス +25 が加算される
-- スコアの理論最大値：5×15 + 5×10 + 25 = **150**（AIがプロンプト指示に従って0〜100に収める）
-
-### スケジュール自動配置
-
-AIが `urgency` を基に初期スケジュールを決定する：
-
-| urgency | schedule |
-|---|---|
-| 4 以上 / 本番障害 | `today` |
-| 3 | `this_week` |
-| 2 以下 | `next_week` |
-
-### スケジューラー（自動移動）
-
-新しいタスクが追加されるたびに `recalculate_schedule()` が実行される。
+バッファが指定されると、以下がSystem Promptに追加される：
 
 ```
-today の合計工数（未完了タスクのみ） > 6時間
-  かつ
-タスクの priority.level が "high" でない
-  →  schedule を "this_week" に変更 + autoMoved = True をセット
-```
-
-> 高優先度タスクは6時間上限を超えても今日のカラムに残る。
-
-### バッファ計算
-
-```python
-# 時間加算の場合
-adjustedTotalHours = totalHours + hours
-
-# 倍率の場合（0.5刻みで丸め）
-adjustedTotalHours = round(totalHours * multiplier * 2) / 2
-
-adjustedDays = ceil(adjustedTotalHours / 6)
+【バッファについて】
+依頼者が工数に+{バッファ内容}のバッファを希望しています。
+- totalHoursにバッファを含めた合計値を設定すること
+- stepsの時間合計もtotalHoursと一致させること
+- slackReplyの完了予定もバッファ込みの工数で記述すること
 ```
 
 ---
@@ -208,37 +188,19 @@ adjustedDays = ceil(adjustedTotalHours / 6)
 
 AIに「エンジニアリングマネージャー」のペルソナを与え、**JSONのみを返す**よう厳命する。
 
-```
-あなたは事業会社のエンジニアリングマネージャーです。
-インフラからアプリまで横断的に担当するエンジニアへの依頼メッセージを受け取り、
-以下の構造でJSONのみを返してください。マークダウンや説明文は一切含めないこと。
-...（スキーマ定義・スコア算出基準・schedule判定基準）
-```
+主な指示内容：
+- タスクタイトル、工数、作業手順、Backlogチケット、Slack返信を生成
+- 作業手順は最低5ステップ以上（大きいタスクは10以上）
+- 各ステップにdescription（具体的な作業内容）を含める
+- Backlogチケットは 背景/目的/期待動作 の3セクション
 
-PROJECT.md が読み込まれている場合、System Prompt の末尾に以下を追記する：
+コンテキストファイルが読み込まれている場合、System Prompt の末尾に追記：
 
 ```
 【プロジェクト固有の前提情報】
 以下の情報を必ず考慮してタスク分解・工数見積もりを行うこと。
 
-（PROJECT.md の内容）
-```
-
-### バッファ再生成プロンプト（User Message）
-
-バッファ適用時に、元の返答テンプレを書き換えるよう AI に依頼する。
-**JSONではなくテキスト（Slack返信文）のみを返す**ようにしている。
-
-```
-以下のタスク情報とバッファ内容をもとに、依頼者へのSlack返信文を再生成してください。
-バッファの理由を自然な文体で組み込み、コピペできる形式で返してください。
-返答はテキストのみ（JSONや説明文不要）。
-
-タスク: {title}
-元の工数: {totalHours}時間
-バッファ後工数: {adjustedTotalHours}時間（{adjustedDays}日）
-バッファ理由: {reason}
-元の返答テンプレ: {replyTemplate}
+（コンテキストファイルの内容）
 ```
 
 ---
@@ -247,32 +209,39 @@ PROJECT.md が読み込まれている場合、System Prompt の末尾に以下�
 
 ### 状態管理
 
-グローバルな `state` オブジェクトと、タスクごとのバッファUIを `bufferUI` で管理する。
+グローバルな `state` オブジェクトで管理する。
 
 ```js
 const state = {
   tasks: [],           // タスクの配列（サーバーと同期）
   hasApiKey: false,    // APIキー設定済み確認フラグ
-  provider: 'anthropic', // 使用中のAIプロバイダー（'anthropic' | 'gemini'）
-  hasContext: false,   // PROJECT.md 読み込み済みフラグ
+  provider: 'anthropic', // 使用中のAIプロバイダー
+  hasContext: false,   // コンテキスト読み込み済みフラグ
   contextFilename: null,
   loading: false,      // AI分析中フラグ
-};
-
-const bufferUI = {
-  // taskId → { open, type, hours, multiplier }
+  buffer: null,        // 選択中のバッファ設定
 };
 ```
 
 ### レンダリング
 
-`renderBoard()` が呼ばれるたびに3カラムすべてのDOMを再生成する（Virtual DOM不使用）。
-バッファパネルの開閉状態は `bufferUI` を参照して再描画後も復元する。
+`renderResults()` が呼ばれるたびに結果エリアのDOMを再生成する（Virtual DOM不使用）。
+タスクは新しいものが上に表示される。
+
+### 結果表示
+
+1カラムのシンプルなレイアウト。各タスクは以下の4セクションで構成：
+
+1. **ヘッダー** — タスク名 + 工数（バッファバッジ）
+2. **作業手順** — 番号付きリスト（各手順にdescription付き）
+3. **Backlogチケット** — 背景/目的/期待動作（コピーボタン付き）
+4. **Slack返信** — コピーボタン付き
 
 ### デザイントークン
 
 | 変数 | 値 | 用途 |
 |---|---|---|
-| `--bg` | `#0F172A` (slate-950) | ページ背景 |
-| `--card` | `#1E293B` (slate-800) | カード背景 |
-| `--accent` | `#6366F1` (indigo-500) | ボタン・フォーカスリング |
+| `--bg` | `#1a1a1a` | ページ背景 |
+| `--card` | `#242424` | カード背景 |
+| `--border` | `#333` | ボーダー |
+| `--accent` | `#d4a574` | アクセント（ボタン・リンク） |
