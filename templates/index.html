@@ -39,27 +39,15 @@
 <!-- API Key Modal -->
 <div id="modal-overlay" class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40 hidden">
   <div class="card rounded-2xl p-6 w-full max-w-md mx-4" style="border:1px solid var(--border)">
-    <h2 class="text-base font-bold mb-1">APIキーを設定</h2>
+    <h2 class="text-base font-bold mb-1">OpenAI APIキーを設定</h2>
     <p class="text-xs mb-3 leading-relaxed" style="color:#888">
-      使用するAIプロバイダーとAPIキーを入力してください。<br>
+      OpenAIのAPIキーを入力してください。<br>
       キーはサーバーメモリのみに保持され、永続化・ログ出力は行いません。
     </p>
-    <div class="flex gap-4 mb-3">
-      <label class="flex items-center gap-1.5 text-sm cursor-pointer">
-        <input type="radio" name="modal-provider" value="anthropic" checked
-               onchange="onProviderChange('anthropic')" style="accent-color:var(--accent)">
-        Claude (Anthropic)
-      </label>
-      <label class="flex items-center gap-1.5 text-sm cursor-pointer">
-        <input type="radio" name="modal-provider" value="gemini"
-               onchange="onProviderChange('gemini')" style="accent-color:var(--accent)">
-        Gemini (Google)
-      </label>
-    </div>
     <input
       type="password"
       id="api-key-input"
-      placeholder="sk-ant-api03-..."
+      placeholder="sk-..."
       class="dark-input w-full px-3 py-2 rounded-lg text-sm mb-4 font-mono"
     >
     <div class="flex gap-2 justify-end">
@@ -166,7 +154,6 @@
 const state = {
   tasks: [],
   hasApiKey: false,
-  provider: 'anthropic',
   hasContext: false,
   contextFilename: null,
   loading: false,
@@ -197,7 +184,6 @@ async function init() {
     ]);
     state.tasks = tasks;
     state.hasApiKey = keyStatus.hasKey;
-    state.provider = keyStatus.provider || 'anthropic';
     state.hasContext = ctxStatus.hasContext;
     state.contextFilename = ctxStatus.filename;
 
@@ -379,19 +365,7 @@ async function analyzeTask() {
 // ============================================================
 // API Key modal
 // ============================================================
-const PROVIDER_PLACEHOLDERS = {
-  anthropic: 'sk-ant-api03-...',
-  gemini: 'AIzaSy...',
-};
-
-function onProviderChange(provider) {
-  document.getElementById('api-key-input').placeholder = PROVIDER_PLACEHOLDERS[provider] || '';
-}
-
 function openModal() {
-  const radios = document.querySelectorAll('input[name="modal-provider"]');
-  radios.forEach(r => { r.checked = r.value === state.provider; });
-  document.getElementById('api-key-input').placeholder = PROVIDER_PLACEHOLDERS[state.provider] || '';
   document.getElementById('modal-overlay').classList.remove('hidden');
   setTimeout(() => document.getElementById('api-key-input').focus(), 50);
 }
@@ -401,15 +375,12 @@ function closeModal() {
 async function submitApiKey() {
   const key = document.getElementById('api-key-input').value.trim();
   if (!key) { toast('APIキーを入力してください', 'error'); return; }
-  const provider = document.querySelector('input[name="modal-provider"]:checked')?.value || 'anthropic';
   try {
-    await api('POST', '/api/set-key', { apiKey: key, provider });
+    await api('POST', '/api/set-key', { apiKey: key });
     state.hasApiKey = true;
-    state.provider = provider;
     updateApiKeyUI();
     closeModal();
-    const name = provider === 'gemini' ? 'Gemini' : 'Claude';
-    toast(`${name} APIキーを設定しました`, 'success');
+    toast('OpenAI APIキーを設定しました', 'success');
   } catch (e) {
     toast('設定エラー: ' + e.message, 'error');
   }
@@ -418,12 +389,7 @@ function updateApiKeyUI() {
   const dot = document.getElementById('api-key-dot');
   dot.className = `w-2 h-2 rounded-full flex-none ${state.hasApiKey ? 'bg-green-400' : 'bg-red-500'}`;
   const btn = document.getElementById('api-key-btn');
-  if (state.hasApiKey) {
-    const name = state.provider === 'gemini' ? 'Gemini' : 'Claude';
-    btn.textContent = `${name} キー設定済`;
-  } else {
-    btn.textContent = 'APIキー設定';
-  }
+  btn.textContent = state.hasApiKey ? 'OpenAI キー設定済' : 'APIキー設定';
 }
 
 // ============================================================

@@ -3,9 +3,7 @@ import os
 import time
 from datetime import datetime
 
-import anthropic
-from google import genai as google_genai
-from google.genai import types as genai_types
+import openai
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 
@@ -17,12 +15,7 @@ app = Flask(__name__)
 # In-memory storage (ローカル単一ユーザー用)
 # -------------------------------------------------------------------
 _tasks: dict = {}
-_anthropic_env = os.environ.get("ANTHROPIC_API_KEY")
-_gemini_env = os.environ.get("GEMINI_API_KEY")
-_api_key: dict = {
-    "value": _anthropic_env or _gemini_env or None,
-    "provider": "gemini" if (not _anthropic_env and _gemini_env) else "anthropic",
-}
+_api_key: str | None = os.environ.get("OPENAI_API_KEY") or None
 _project_context: dict = {"content": None, "filename": None}
 
 # -------------------------------------------------------------------
@@ -49,7 +42,7 @@ SYSTEM_PROMPT = """あなたは事業会社のエンジニアリングマネー�
     "purpose": "目的（このタスクで何を達成するかを1〜2文で記述）",
     "expectedBehavior": "期待動作（完了後にどう動作すべきかを箇条書きで記述）"
   },
-  "slackReply": "依頼者へのSlack返信文（コピペできる形式・改行あり）。完了予定日時の目安を必ず含めること。"
+  "slackReply": "依頼者へのSlack返信文（コピペできる形式・改行あり）。【重要】依頼者はITの専門知識を持たない営業担当者です。技術用語・コマンド・専門略語は一切使わず、誰でも理解できる平易な日本語で記述すること。何をするのか・なぜ時間がかかるのかを具体的にわかりやすく説明し、完了予定日時の目安を必ず含めること。"
 }
 
 【steps（作業手順）について】
@@ -79,33 +72,18 @@ BUFFER_HINT = """
 # Helpers
 # -------------------------------------------------------------------
 def call_ai(prompt: str, system: str = None, max_tokens: int = 1024) -> str:
-    """設定されたAIプロバイダーを呼び出してテキストを返す"""
-    api_key = _api_key["value"]
-    provider = _api_key.get("provider", "anthropic")
-
-    if provider == "gemini":
-        client = google_genai.Client(api_key=api_key)
-        config = genai_types.GenerateContentConfig(
-            max_output_tokens=max_tokens,
-            system_instruction=system if system else None,
-        )
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt,
-            config=config,
-        )
-        return response.text
-    else:
-        client = anthropic.Anthropic(api_key=api_key)
-        kwargs = {
-            "model": "claude-sonnet-4-5",
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if system:
-            kwargs["system"] = system
-        response = client.messages.create(**kwargs)
-        return response.content[0].text
+    """OpenAI GPT-4o miniを呼び出してテキストを返す"""
+    client = openai.OpenAI(api_key=_api_key)
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        max_tokens=max_tokens,
+        messages=messages,
+    )
+    return response.choices[0].message.content
 
 
 def format_buffer_desc(buffer: dict) -> str:
@@ -141,23 +119,21 @@ def index():
 
 @app.route("/api/set-key", methods=["POST"])
 def set_key():
+    global _api_key
     data = request.json or {}
     key = data.get("apiKey", "").strip()
-    provider = data.get("provider", "anthropic")
-    _api_key["value"] = key if key else None
-    _api_key["provider"] = provider if provider in ("anthropic", "gemini") else "anthropic"
+    _api_key = key if key else None
     return jsonify({"ok": True})
 
 
 @app.route("/api/has-key", methods=["GET"])
 def has_key():
-    return jsonify({"hasKey": bool(_api_key["value"]), "provider": _api_key.get("provider", "anthropic")})
+    return jsonify({"hasKey": bool(_api_key)})
 
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
-    api_key = _api_key["value"]
-    if not api_key:
+    if not _api_key:
         return jsonify({"error": "APIキーが設定されていません"}), 400
 
     data = request.json or {}
@@ -201,20 +177,11 @@ def analyze():
 
     except json.JSONDecodeError as e:
         return jsonify({"error": f"AIの返答をJSONとしてパースできませんでした: {e}"}), 500
-    except anthropic.AuthenticationError:
-        return jsonify({"error": "APIキーが無効です。正しいAnthropicのAPIキーを設定してください。"}), 401
-    except anthropic.RateLimitError:
+    except openai.AuthenticationError:
+        return jsonify({"error": "APIキーが無効です。正しいOpenAIのAPIキーを設定してください。"}), 401
+    except openai.RateLimitError:
         return jsonify({"error": "APIレート制限に達しました。しばらく待ってから再試行してください。"}), 429
     except Exception as e:
-        err = str(e).lower()
-        import traceback
-        print(f"[DEBUG] type={type(e).__name__}")
-        print(f"[DEBUG] message={e}")
-        traceback.print_exc()
-        if any(k in err for k in ("api key", "permission", "403", "invalid api", "unauthenticated")):
-            return jsonify({"error": "APIキーが無効です。正しいAPIキーを設定してください。"}), 401
-        if any(k in err for k in ("quota", "429", "rate limit", "resource exhausted")):
-            return jsonify({"error": "APIレート制限に達しました。しばらく待ってから再試行してください。"}), 429
         return jsonify({"error": str(e)}), 500
 
 
