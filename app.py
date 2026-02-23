@@ -79,7 +79,7 @@ def call_ai(prompt: str, system: str = None, max_tokens: int = 1024) -> str:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     response = client.chat.completions.create(
-        model="gpt-5.2",
+        model="gpt-5.1",
         max_completion_tokens=max_tokens,
         messages=messages,
     )
